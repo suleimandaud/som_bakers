@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: smoother look like Stitch */
+:root { color-scheme: light; }
+body { @apply bg-soft text-gray-900; }
+
+@layer components {
+  .btn-primary { @apply bg-primary text-white px-4 py-2 rounded-xl font-bold hover:opacity-90 transition; }
+  .btn-outline { @apply border border-primary text-primary px-4 py-2 rounded-xl font-bold bg-white hover:bg-soft transition; }
+  .card { @apply bg-white border border-gray-100 rounded-2xl shadow-sm; }
+}
