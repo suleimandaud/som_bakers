@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 const CartContext = createContext(null);
-
 const LS_KEY = "cake_cart_v1";
 
 function loadCart() {
@@ -17,28 +16,62 @@ export function CartProvider({ children }) {
   const [items, setItems] = useState(loadCart);
 
   useEffect(() => {
-    localStorage.setItem(LS_KEY, JSON.stringify(items));
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(items));
+    } catch (e) {
+      // localStorage can fail in private mode sometimes
+      console.error("localStorage save failed:", e);
+    }
   }, [items]);
 
   const api = useMemo(() => {
+    // Normalize incoming cake
+    function normalizeCake(cake) {
+      return {
+        id: cake.id,
+        name: cake.name ?? "Cake",
+        price: Number(cake.price ?? 0),
+        image_url: cake.image_url ?? null,
+      };
+    }
+
+    // ✅ Add one item
     function addItem(cake) {
+      const c = normalizeCake(cake);
+
       setItems((prev) => {
-        const found = prev.find((x) => x.id === cake.id);
+        const found = prev.find((x) => x.id === c.id);
         if (found) {
-          return prev.map((x) => (x.id === cake.id ? { ...x, qty: x.qty + 1 } : x));
+          return prev.map((x) => (x.id === c.id ? { ...x, qty: x.qty + 1 } : x));
         }
-        return [...prev, { id: cake.id, name: cake.name, price: Number(cake.price), image_url: cake.image_url, qty: 1 }];
+        return [...prev, { ...c, qty: 1 }];
       });
     }
 
+    // ✅ Alias: some files may call cart.add(...)
+    function add(cake) {
+      addItem(cake);
+    }
+
+    // ✅ Remove item
     function removeItem(id) {
       setItems((prev) => prev.filter((x) => x.id !== id));
     }
 
+    // ✅ Set qty (min 1)
     function setQty(id, qty) {
-      setItems((prev) =>
-        prev.map((x) => (x.id === id ? { ...x, qty: Math.max(1, qty) } : x))
-      );
+      const safeQty = Math.max(1, Number(qty || 1));
+      setItems((prev) => prev.map((x) => (x.id === id ? { ...x, qty: safeQty } : x)));
+    }
+
+    // ✅ Decrease qty (remove if qty becomes 0)
+    function decrease(id) {
+      setItems((prev) => {
+        const found = prev.find((x) => x.id === id);
+        if (!found) return prev;
+        if (found.qty <= 1) return prev.filter((x) => x.id !== id);
+        return prev.map((x) => (x.id === id ? { ...x, qty: x.qty - 1 } : x));
+      });
     }
 
     function clear() {
@@ -46,14 +79,24 @@ export function CartProvider({ children }) {
     }
 
     function total() {
-      return items.reduce((sum, it) => sum + it.price * it.qty, 0);
+      return items.reduce((sum, it) => sum + Number(it.price) * Number(it.qty), 0);
     }
 
     function count() {
-      return items.reduce((sum, it) => sum + it.qty, 0);
+      return items.reduce((sum, it) => sum + Number(it.qty), 0);
     }
 
-    return { items, addItem, removeItem, setQty, clear, total, count };
+    return {
+      items,
+      addItem,
+      add,          // ✅ so your Home code works with cart.add(...)
+      removeItem,
+      setQty,
+      decrease,     // ✅ easier for minus button
+      clear,
+      total,
+      count,
+    };
   }, [items]);
 
   return <CartContext.Provider value={api}>{children}</CartContext.Provider>;

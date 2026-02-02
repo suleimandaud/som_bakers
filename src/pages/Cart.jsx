@@ -4,7 +4,7 @@ import { useCart } from "../context/cartcontext.jsx";
 import { supabase } from "../lib/supabase.js";
 import { buildCartMessage, buildWhatsAppLink } from "../lib/whatsapp.js";
 
-const DELIVERY_FEE = 5; // matches screenshot idea
+const DELIVERY_FEE = 5;
 
 const TIME_OPTIONS = [
   "Morning (9AM-12PM)",
@@ -12,24 +12,31 @@ const TIME_OPTIONS = [
   "Evening (4PM-8PM)",
 ];
 
+function sanitizePhone(input) {
+  // Keep digits and plus, remove spaces/letters
+  return (input || "").replace(/[^\d+]/g, "");
+}
+
 export default function Cart() {
   const cart = useCart();
 
-  // UI fields (match screenshot)
   const [customer, setCustomer] = useState({
     name: "",
     phone: "",
     deliveryDate: "",
     preferredTime: TIME_OPTIONS[0],
     message: "",
-    address: "", // optional (you already store it)
+    address: "",
   });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const subtotal = useMemo(() => cart.total(), [cart]);
-  const total = useMemo(() => subtotal + (cart.items.length ? DELIVERY_FEE : 0), [subtotal, cart.items.length]);
+  const total = useMemo(
+    () => subtotal + (cart.items.length ? DELIVERY_FEE : 0),
+    [subtotal, cart.items.length]
+  );
 
   async function checkoutWhatsApp() {
     setError("");
@@ -39,15 +46,23 @@ export default function Cart() {
       return;
     }
 
-    if (!customer.name.trim() || !customer.phone.trim()) {
+    const name = customer.name.trim();
+    const phoneClean = sanitizePhone(customer.phone);
+
+    if (!name || !phoneClean) {
       setError("Name and phone are required.");
+      return;
+    }
+
+    // Simple phone length check (avoid DB issues)
+    if (phoneClean.replace("+", "").length < 8) {
+      setError("Please enter a valid phone number.");
       return;
     }
 
     setLoading(true);
 
     try {
-      // Combine the right-panel fields into notes so admin can see them
       const notesCombined = [
         customer.message?.trim() ? `Message: ${customer.message.trim()}` : null,
         customer.deliveryDate ? `Delivery Date: ${customer.deliveryDate}` : null,
@@ -56,13 +71,13 @@ export default function Cart() {
         .filter(Boolean)
         .join(" | ");
 
-      // 1) Create order
+      // ✅ 1) Create order
       const { data: order, error: orderErr } = await supabase
         .from("orders")
         .insert([
           {
-            customer_name: customer.name.trim(),
-            customer_phone: customer.phone.trim(),
+            customer_name: name,
+            customer_phone: phoneClean,
             address: customer.address?.trim() || null,
             notes: notesCombined || null,
             total_price: Number(total.toFixed(2)),
@@ -72,28 +87,35 @@ export default function Cart() {
         .select()
         .single();
 
-      if (orderErr) throw orderErr;
+      if (orderErr) {
+        console.error("Order insert error:", orderErr);
+        throw orderErr;
+      }
 
-      // 2) Create order items
+      // ✅ 2) Create order items
       const itemsPayload = cart.items.map((it) => ({
         order_id: order.id,
         cake_id: it.id,
         cake_name_snapshot: it.name,
         price_snapshot: Number(it.price),
         qty: it.qty,
-        line_total: Number((it.price * it.qty).toFixed(2)),
+        line_total: Number((Number(it.price) * Number(it.qty)).toFixed(2)),
       }));
 
       const { error: itemsErr } = await supabase.from("order_items").insert(itemsPayload);
-      if (itemsErr) throw itemsErr;
 
-      // 3) Build WhatsApp message and redirect
+      if (itemsErr) {
+        console.error("Order items insert error:", itemsErr);
+        throw itemsErr;
+      }
+
+      // ✅ 3) WhatsApp message + redirect
       const message = buildCartMessage({
         customer: {
-          name: customer.name,
-          phone: customer.phone,
+          name,
+          phone: phoneClean,
           address: customer.address,
-          notes: notesCombined, // goes into WhatsApp message as notes
+          notes: notesCombined,
         },
         items: cart.items,
         total,
@@ -102,20 +124,33 @@ export default function Cart() {
       const waLink = buildWhatsAppLink(message);
 
       cart.clear();
-      window.open(waLink, "_blank", "noopener,noreferrer");
+
+      // ✅ Mobile friendly: use location redirect (window.open gets blocked)
+      window.location.href = waLink;
     } catch (e) {
-      console.error(e);
-      setError("Failed to create order. Please try again.");
+      console.error("Checkout error:", e);
+
+      // ✅ Show REAL error so you can fix quickly (RLS/type/column etc.)
+      const msg =
+        e?.message ||
+        e?.error_description ||
+        e?.details ||
+        e?.hint ||
+        JSON.stringify(e);
+
+      setError(msg || "Failed to create order. Please try again.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-6 sm:py-8">
       {/* Top header */}
-      <div className="mb-6">
-        <h1 className="text-3xl font-extrabold text-gray-900">Review Your Order</h1>
+      <div className="mb-4 sm:mb-6">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900">
+          Review Your Order
+        </h1>
         <p className="text-sm text-pink-600 mt-1">
           Finalize your sweet selection and send it to us via WhatsApp.
         </p>
@@ -146,23 +181,20 @@ export default function Cart() {
                   />
 
                   <div className="flex-1 min-w-0">
-                    <div className="font-extrabold text-gray-900 truncate">
-                      {it.name}
-                    </div>
+                    <div className="font-extrabold text-gray-900 truncate">{it.name}</div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       ${Number(it.price).toFixed(2)}
                     </div>
-                    {/* Optional: mini note line like screenshot */}
                     <div className="text-[11px] text-gray-400 mt-1 truncate">
                       Quantity: {it.qty} • Cake
                     </div>
                   </div>
 
-                  {/* Qty pill */}
+                  {/* Qty */}
                   <div className="flex items-center gap-2">
                     <button
                       className="w-8 h-8 rounded-full border border-pink-200 text-pink-600 font-extrabold hover:bg-soft transition"
-                      onClick={() => cart.setQty(it.id, it.qty - 1)}
+                      onClick={() => cart.decrease(it.id)}
                       aria-label="Decrease quantity"
                     >
                       −
@@ -174,7 +206,7 @@ export default function Cart() {
 
                     <button
                       className="w-8 h-8 rounded-full border border-pink-200 text-pink-600 font-extrabold hover:bg-soft transition"
-                      onClick={() => cart.setQty(it.id, it.qty + 1)}
+                      onClick={() => cart.addItem(it)}
                       aria-label="Increase quantity"
                     >
                       +
@@ -207,6 +239,7 @@ export default function Cart() {
             <div className="mt-4 space-y-3">
               <Field label="Your Name">
                 <input
+                  autoComplete="name"
                   className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
                   placeholder="Sarah Johnson"
                   value={customer.name}
@@ -216,10 +249,14 @@ export default function Cart() {
 
               <Field label="Phone Number">
                 <input
+                  inputMode="tel"
+                  autoComplete="tel"
                   className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
-                  placeholder="+1 (555) 000-0000"
+                  placeholder="+25261xxxxxxx"
                   value={customer.phone}
-                  onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
+                  onChange={(e) =>
+                    setCustomer({ ...customer, phone: e.target.value })
+                  }
                 />
               </Field>
 
@@ -229,7 +266,9 @@ export default function Cart() {
                     type="date"
                     className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
                     value={customer.deliveryDate}
-                    onChange={(e) => setCustomer({ ...customer, deliveryDate: e.target.value })}
+                    onChange={(e) =>
+                      setCustomer({ ...customer, deliveryDate: e.target.value })
+                    }
                   />
                 </Field>
 
@@ -237,7 +276,9 @@ export default function Cart() {
                   <select
                     className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
                     value={customer.preferredTime}
-                    onChange={(e) => setCustomer({ ...customer, preferredTime: e.target.value })}
+                    onChange={(e) =>
+                      setCustomer({ ...customer, preferredTime: e.target.value })
+                    }
                   >
                     {TIME_OPTIONS.map((t) => (
                       <option key={t} value={t}>
@@ -248,7 +289,6 @@ export default function Cart() {
                 </Field>
               </div>
 
-              {/* Optional address (your original spec) */}
               <Field label="Address (optional)">
                 <input
                   className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
@@ -289,12 +329,11 @@ export default function Cart() {
             </div>
 
             {error && (
-              <div className="mt-3 text-sm font-bold text-red-600">
+              <div className="mt-3 text-sm font-bold text-red-600 break-words">
                 {error}
               </div>
             )}
 
-            {/* CTA */}
             <button
               disabled={loading || cart.items.length === 0}
               onClick={checkoutWhatsApp}
