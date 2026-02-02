@@ -139,7 +139,7 @@ export default function Home() {
                          bg-white border border-gray-200 px-4 py-2 rounded-full
                          hover:bg-white/70 transition"
             >
-              <span className="text-green-600">●</span> WhatsApp
+              {/* <span className="text-green-600">●</span> WhatsApp */}
             </a>
           </div>
 
@@ -195,7 +195,7 @@ export default function Home() {
               </div>
 
               {/* mobile WhatsApp quick button */}
-              <a
+              {/* <a
                 href={generalLink}
                 target="_blank"
                 rel="noreferrer"
@@ -204,7 +204,7 @@ export default function Home() {
                            hover:bg-white/70 transition"
               >
                 <span className="text-green-600">●</span> WhatsApp to Order
-              </a>
+              </a> */}
             </>
           )}
         </div>
@@ -293,12 +293,13 @@ function FeaturedCakeCard({ cake, compact = false }) {
         {/* ✅ ADD TO CART BUTTON */}
         <button
           onClick={() =>
-            cart.add({
-              id: cake.id,
-              name: cake.name,
-              price: Number(cake.price),
-              image_url: cake.image_url,
-            })
+            cart.addItem({
+  id: cake.id,
+  name: cake.name,
+  price: Number(cake.price),
+  image_url: cake.image_url,
+})
+
           }
           className="mt-4 w-full inline-flex items-center justify-center gap-2
                      bg-pink-500 hover:bg-pink-600 text-white font-extrabold
