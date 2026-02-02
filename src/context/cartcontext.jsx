@@ -12,6 +12,15 @@ function loadCart() {
   }
 }
 
+function normalizeCake(cake) {
+  return {
+    id: cake.id,
+    name: cake.name ?? "Cake",
+    price: Number(cake.price ?? 0),
+    image_url: cake.image_url ?? null,
+  };
+}
+
 export function CartProvider({ children }) {
   const [items, setItems] = useState(loadCart);
 
@@ -19,26 +28,13 @@ export function CartProvider({ children }) {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(items));
     } catch (e) {
-      // localStorage can fail in private mode sometimes
       console.error("localStorage save failed:", e);
     }
   }, [items]);
 
   const api = useMemo(() => {
-    // Normalize incoming cake
-    function normalizeCake(cake) {
-      return {
-        id: cake.id,
-        name: cake.name ?? "Cake",
-        price: Number(cake.price ?? 0),
-        image_url: cake.image_url ?? null,
-      };
-    }
-
-    // ✅ Add one item
     function addItem(cake) {
       const c = normalizeCake(cake);
-
       setItems((prev) => {
         const found = prev.find((x) => x.id === c.id);
         if (found) {
@@ -48,23 +44,15 @@ export function CartProvider({ children }) {
       });
     }
 
-    // ✅ Alias: some files may call cart.add(...)
-    function add(cake) {
-      addItem(cake);
-    }
-
-    // ✅ Remove item
     function removeItem(id) {
       setItems((prev) => prev.filter((x) => x.id !== id));
     }
 
-    // ✅ Set qty (min 1)
     function setQty(id, qty) {
       const safeQty = Math.max(1, Number(qty || 1));
       setItems((prev) => prev.map((x) => (x.id === id ? { ...x, qty: safeQty } : x)));
     }
 
-    // ✅ Decrease qty (remove if qty becomes 0)
     function decrease(id) {
       setItems((prev) => {
         const found = prev.find((x) => x.id === id);
@@ -86,17 +74,7 @@ export function CartProvider({ children }) {
       return items.reduce((sum, it) => sum + Number(it.qty), 0);
     }
 
-    return {
-      items,
-      addItem,
-      add,          // ✅ so your Home code works with cart.add(...)
-      removeItem,
-      setQty,
-      decrease,     // ✅ easier for minus button
-      clear,
-      total,
-      count,
-    };
+    return { items, addItem, removeItem, setQty, decrease, clear, total, count };
   }, [items]);
 
   return <CartContext.Provider value={api}>{children}</CartContext.Provider>;

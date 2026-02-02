@@ -13,7 +13,6 @@ const TIME_OPTIONS = [
 ];
 
 function sanitizePhone(input) {
-  // Keep digits and plus, remove spaces/letters
   return (input || "").replace(/[^\d+]/g, "");
 }
 
@@ -54,7 +53,6 @@ export default function Cart() {
       return;
     }
 
-    // Simple phone length check (avoid DB issues)
     if (phoneClean.replace("+", "").length < 8) {
       setError("Please enter a valid phone number.");
       return;
@@ -71,7 +69,7 @@ export default function Cart() {
         .filter(Boolean)
         .join(" | ");
 
-      // ✅ 1) Create order
+      // 1) Create order (THIS FAILS IF RLS BLOCKS INSERT)
       const { data: order, error: orderErr } = await supabase
         .from("orders")
         .insert([
@@ -87,29 +85,22 @@ export default function Cart() {
         .select()
         .single();
 
-      if (orderErr) {
-        console.error("Order insert error:", orderErr);
-        throw orderErr;
-      }
+      if (orderErr) throw orderErr;
 
-      // ✅ 2) Create order items
+      // 2) Create order items
       const itemsPayload = cart.items.map((it) => ({
         order_id: order.id,
         cake_id: it.id,
         cake_name_snapshot: it.name,
         price_snapshot: Number(it.price),
-        qty: it.qty,
+        qty: Number(it.qty),
         line_total: Number((Number(it.price) * Number(it.qty)).toFixed(2)),
       }));
 
       const { error: itemsErr } = await supabase.from("order_items").insert(itemsPayload);
+      if (itemsErr) throw itemsErr;
 
-      if (itemsErr) {
-        console.error("Order items insert error:", itemsErr);
-        throw itemsErr;
-      }
-
-      // ✅ 3) WhatsApp message + redirect
+      // 3) WhatsApp message
       const message = buildCartMessage({
         customer: {
           name,
@@ -125,18 +116,14 @@ export default function Cart() {
 
       cart.clear();
 
-      // ✅ Mobile friendly: use location redirect (window.open gets blocked)
+      // ✅ Mobile-safe redirect (no popup)
       window.location.href = waLink;
     } catch (e) {
       console.error("Checkout error:", e);
 
-      // ✅ Show REAL error so you can fix quickly (RLS/type/column etc.)
+      // show real Supabase error (RLS, missing columns, etc)
       const msg =
-        e?.message ||
-        e?.error_description ||
-        e?.details ||
-        e?.hint ||
-        JSON.stringify(e);
+        e?.message || e?.error_description || e?.details || e?.hint || JSON.stringify(e);
 
       setError(msg || "Failed to create order. Please try again.");
     } finally {
@@ -145,8 +132,7 @@ export default function Cart() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6 sm:py-8">
-      {/* Top header */}
+    <div className="max-w-6xl mx-auto px-4 py-5 sm:py-8">
       <div className="mb-4 sm:mb-6">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900">
           Review Your Order
@@ -156,9 +142,8 @@ export default function Cart() {
         </p>
       </div>
 
-      {/* Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT: items */}
+        {/* Items */}
         <div className="lg:col-span-7">
           {cart.items.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
@@ -172,7 +157,7 @@ export default function Cart() {
               {cart.items.map((it) => (
                 <div
                   key={it.id}
-                  className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm flex gap-4 items-center"
+                  className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm flex gap-3 items-center"
                 >
                   <img
                     src={it.image_url || "https://via.placeholder.com/120?text=Cake"}
@@ -186,16 +171,14 @@ export default function Cart() {
                       ${Number(it.price).toFixed(2)}
                     </div>
                     <div className="text-[11px] text-gray-400 mt-1 truncate">
-                      Quantity: {it.qty} • Cake
+                      Quantity: {it.qty}
                     </div>
                   </div>
 
-                  {/* Qty */}
                   <div className="flex items-center gap-2">
                     <button
                       className="w-8 h-8 rounded-full border border-pink-200 text-pink-600 font-extrabold hover:bg-soft transition"
                       onClick={() => cart.decrease(it.id)}
-                      aria-label="Decrease quantity"
                     >
                       −
                     </button>
@@ -207,14 +190,13 @@ export default function Cart() {
                     <button
                       className="w-8 h-8 rounded-full border border-pink-200 text-pink-600 font-extrabold hover:bg-soft transition"
                       onClick={() => cart.addItem(it)}
-                      aria-label="Increase quantity"
                     >
                       +
                     </button>
                   </div>
 
                   <button
-                    className="ml-2 text-xs font-bold text-pink-500 hover:text-pink-600"
+                    className="ml-1 text-xs font-bold text-pink-500 hover:text-pink-600"
                     onClick={() => cart.removeItem(it.id)}
                   >
                     Remove
@@ -231,7 +213,7 @@ export default function Cart() {
           )}
         </div>
 
-        {/* RIGHT: delivery details */}
+        {/* Details */}
         <div className="lg:col-span-5">
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-soft">
             <h2 className="font-extrabold text-gray-900">Delivery Details</h2>
@@ -241,7 +223,7 @@ export default function Cart() {
                 <input
                   autoComplete="name"
                   className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
-                  placeholder="Sarah Johnson"
+                  placeholder="Ali Mohamed"
                   value={customer.name}
                   onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
                 />
@@ -254,9 +236,7 @@ export default function Cart() {
                   className="w-full rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
                   placeholder="+25261xxxxxxx"
                   value={customer.phone}
-                  onChange={(e) =>
-                    setCustomer({ ...customer, phone: e.target.value })
-                  }
+                  onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
                 />
               </Field>
 
@@ -301,14 +281,13 @@ export default function Cart() {
               <Field label="Message to Baker">
                 <textarea
                   className="w-full min-h-[90px] rounded-xl border border-pink-100 bg-soft px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-pink-200"
-                  placeholder="Any specific dietary requirements or delivery notes..."
+                  placeholder="Any delivery notes..."
                   value={customer.message}
                   onChange={(e) => setCustomer({ ...customer, message: e.target.value })}
                 />
               </Field>
             </div>
 
-            {/* Summary */}
             <div className="mt-5 border-t border-gray-100 pt-4 text-sm">
               <div className="flex items-center justify-between text-gray-600">
                 <span>Subtotal</span>
@@ -328,23 +307,16 @@ export default function Cart() {
               </div>
             </div>
 
-            {error && (
-              <div className="mt-3 text-sm font-bold text-red-600 break-words">
-                {error}
-              </div>
-            )}
+            {error && <div className="mt-3 text-sm font-bold text-red-600 break-words">{error}</div>}
 
             <button
               disabled={loading || cart.items.length === 0}
               onClick={checkoutWhatsApp}
-              className={
-                "mt-5 w-full inline-flex items-center justify-center gap-2 " +
-                "bg-green-500 hover:bg-green-600 text-white font-extrabold " +
-                "px-4 py-3 rounded-full transition shadow-soft disabled:opacity-50"
-              }
+              className="mt-5 w-full inline-flex items-center justify-center gap-2
+                         bg-green-500 hover:bg-green-600 text-white font-extrabold
+                         px-4 py-3 rounded-full transition shadow-soft disabled:opacity-50"
             >
-              <span className="text-white">🟢</span>
-              {loading ? "Processing..." : "Place Order via WhatsApp"}
+              🟢 {loading ? "Processing..." : "Place Order via WhatsApp"}
             </button>
 
             <p className="mt-2 text-[10px] text-center text-gray-400 font-semibold tracking-wide">
