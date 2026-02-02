@@ -19,7 +19,7 @@ export default function Navbar() {
           className="flex items-center gap-2 font-extrabold text-primary text-lg"
           onClick={() => setOpen(false)}
         >
-          <span className="text-xl">🍰</span> CakeShop
+          <span className="text-xl">🍰</span> SOM BAKERS
         </Link>
 
         {/* Desktop nav */}
