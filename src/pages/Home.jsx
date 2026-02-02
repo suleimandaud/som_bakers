@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase.js";
 import { buildWhatsAppLink } from "../lib/whatsapp.js";
+import { useCart } from "../context/cartcontext.jsx";
 
 const HERO_IMAGE =
   "https://images.unsplash.com/photo-1542826438-bd32f43d626f?auto=format&fit=crop&w=1400&q=80";
@@ -252,22 +253,12 @@ export default function Home() {
 }
 
 function FeaturedCakeCard({ cake, compact = false }) {
+  const cart = useCart();
+
   const name = cake.name || "Cake";
   const desc =
     cake.description || "Fresh seasonal ingredients with a signature cream frosting.";
   const price = Number(cake.price || 0).toFixed(2);
-
-  const waMessage = [
-    "Hello, I want to order this cake:",
-    "",
-    `Cake: ${name}`,
-    `Price: $${price}`,
-    `Category: ${cake.category || "N/A"}`,
-    "",
-    "Please confirm availability. Thank you!",
-  ].join("\n");
-
-  const waLink = buildWhatsAppLink(waMessage);
 
   return (
     <article
@@ -299,21 +290,27 @@ function FeaturedCakeCard({ cake, compact = false }) {
           </div>
         </div>
 
-        <a
-          href={waLink}
-          target="_blank"
-          rel="noreferrer"
+        {/* ✅ ADD TO CART BUTTON */}
+        <button
+          onClick={() =>
+            cart.add({
+              id: cake.id,
+              name: cake.name,
+              price: Number(cake.price),
+              image_url: cake.image_url,
+            })
+          }
           className="mt-4 w-full inline-flex items-center justify-center gap-2
                      bg-pink-500 hover:bg-pink-600 text-white font-extrabold
-                     px-4 py-3 rounded-full transition"
+                     px-4 py-3 rounded-full transition active:scale-[0.98]"
         >
-          <span className="text-white/95">🟢</span>
-          Order via WhatsApp
-        </a>
+          🛒 Add to Cart
+        </button>
       </div>
     </article>
   );
 }
+
 
 function TestimonialCard({ name, text }) {
   const initials = (name || "A").split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
