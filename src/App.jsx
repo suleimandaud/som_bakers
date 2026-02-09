@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Navbar from "./components/navbar.jsx";
+import ProtectedAdminRoute from "./components/ProtectedAdminRoute.jsx";
 
 // customer pages
 import Home from "./pages/Home.jsx";
@@ -20,7 +21,6 @@ export default function App() {
 
   return (
     <>
-      {/* ❌ Hide navbar on admin routes */}
       {!isAdminRoute && <Navbar />}
 
       <Routes>
@@ -33,10 +33,13 @@ export default function App() {
         {/* ADMIN */}
         <Route path="/admin/login" element={<AdminLogin />} />
 
-        <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<AdminDashboard />} />
-          <Route path="cakes" element={<AdminCakes />} />
-          <Route path="orders" element={<AdminOrders />} />
+        {/* ✅ PROTECTED ADMIN */}
+        <Route element={<ProtectedAdminRoute />}>
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<AdminDashboard />} />
+            <Route path="cakes" element={<AdminCakes />} />
+            <Route path="orders" element={<AdminOrders />} />
+          </Route>
         </Route>
 
         <Route path="*" element={<Navigate to="/" />} />
