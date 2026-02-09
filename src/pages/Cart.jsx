@@ -16,6 +16,15 @@ function sanitizePhone(input) {
   return (input || "").replace(/[^\d+]/g, "");
 }
 
+function makeUUID() {
+  if (crypto?.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export default function Cart() {
   const cart = useCart();
 
@@ -40,23 +49,13 @@ export default function Cart() {
   async function checkoutWhatsApp() {
     setError("");
 
-    if (cart.items.length === 0) {
-      setError("Your cart is empty.");
-      return;
-    }
+    if (cart.items.length === 0) return setError("Your cart is empty.");
 
     const name = customer.name.trim();
     const phoneClean = sanitizePhone(customer.phone);
 
-    if (!name || !phoneClean) {
-      setError("Name and phone are required.");
-      return;
-    }
-
-    if (phoneClean.replace("+", "").length < 8) {
-      setError("Please enter a valid phone number.");
-      return;
-    }
+    if (!name || !phoneClean) return setError("Name and phone are required.");
+    if (phoneClean.replace("+", "").length < 8) return setError("Please enter a valid phone number.");
 
     setLoading(true);
 
@@ -69,27 +68,27 @@ export default function Cart() {
         .filter(Boolean)
         .join(" | ");
 
-      // 1) Create order (THIS FAILS IF RLS BLOCKS INSERT)
-      const { data: order, error: orderErr } = await supabase
-        .from("orders")
-        .insert([
-          {
-            customer_name: name,
-            customer_phone: phoneClean,
-            address: customer.address?.trim() || null,
-            notes: notesCombined || null,
-            total_price: Number(total.toFixed(2)),
-            status: "pending",
-          },
-        ])
-        .select()
-        .single();
+      // ✅ IMPORTANT: generate order id locally so we don't need SELECT (RLS)
+      const orderId = makeUUID();
+
+      // ✅ 1) Insert order WITHOUT .select()
+      const { error: orderErr } = await supabase.from("orders").insert([
+        {
+          id: orderId, // make sure orders.id is uuid in DB
+          customer_name: name,
+          customer_phone: phoneClean,
+          address: customer.address?.trim() || null,
+          notes: notesCombined || null,
+          total_price: Number(total.toFixed(2)),
+          status: "pending",
+        },
+      ]);
 
       if (orderErr) throw orderErr;
 
-      // 2) Create order items
+      // ✅ 2) Insert order items WITHOUT reading anything back
       const itemsPayload = cart.items.map((it) => ({
-        order_id: order.id,
+        order_id: orderId,
         cake_id: it.id,
         cake_name_snapshot: it.name,
         price_snapshot: Number(it.price),
@@ -100,7 +99,7 @@ export default function Cart() {
       const { error: itemsErr } = await supabase.from("order_items").insert(itemsPayload);
       if (itemsErr) throw itemsErr;
 
-      // 3) WhatsApp message
+      // ✅ 3) WhatsApp redirect
       const message = buildCartMessage({
         customer: {
           name,
@@ -115,15 +114,16 @@ export default function Cart() {
       const waLink = buildWhatsAppLink(message);
 
       cart.clear();
-
-      // ✅ Mobile-safe redirect (no popup)
-      window.location.href = waLink;
+      window.location.href = waLink; // mobile-safe
     } catch (e) {
       console.error("Checkout error:", e);
 
-      // show real Supabase error (RLS, missing columns, etc)
       const msg =
-        e?.message || e?.error_description || e?.details || e?.hint || JSON.stringify(e);
+        e?.message ||
+        e?.error_description ||
+        e?.details ||
+        e?.hint ||
+        JSON.stringify(e);
 
       setError(msg || "Failed to create order. Please try again.");
     } finally {
@@ -166,7 +166,9 @@ export default function Cart() {
                   />
 
                   <div className="flex-1 min-w-0">
-                    <div className="font-extrabold text-gray-900 truncate">{it.name}</div>
+                    <div className="font-extrabold text-gray-900 truncate">
+                      {it.name}
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       ${Number(it.price).toFixed(2)}
                     </div>
@@ -205,7 +207,10 @@ export default function Cart() {
               ))}
 
               <div className="mt-4">
-                <Link to="/cakes" className="text-sm font-bold text-pink-600 hover:underline">
+                <Link
+                  to="/cakes"
+                  className="text-sm font-bold text-pink-600 hover:underline"
+                >
                   ← Back to Bakery
                 </Link>
               </div>
@@ -307,7 +312,11 @@ export default function Cart() {
               </div>
             </div>
 
-            {error && <div className="mt-3 text-sm font-bold text-red-600 break-words">{error}</div>}
+            {error && (
+              <div className="mt-3 text-sm font-bold text-red-600 break-words">
+                {error}
+              </div>
+            )}
 
             <button
               disabled={loading || cart.items.length === 0}
