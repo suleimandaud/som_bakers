@@ -4,13 +4,18 @@ import { Link } from "react-router-dom";
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({ cakes: 0, orders: 0, whatsapp: 0 });
+
   const [recentOrders, setRecentOrders] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
-  const [lowStock, setLowStock] = useState([]); // out of stock / unavailable cakes
+  const [lowStock, setLowStock] = useState([]);
+  const [allOrders, setAllOrders] = useState([]); // ✅ for accounting
+
   const [loadingPanels, setLoadingPanels] = useState(true);
 
   useEffect(() => {
     (async () => {
+      setLoadingPanels(true);
+
       // --- counts ---
       const { count: cakes } = await supabase
         .from("cakes")
@@ -31,9 +36,6 @@ export default function AdminDashboard() {
         whatsapp: whatsapp || 0,
       });
 
-      // --- panels data ---
-      setLoadingPanels(true);
-
       // Recent orders
       const { data: ro } = await supabase
         .from("orders")
@@ -41,7 +43,7 @@ export default function AdminDashboard() {
         .order("created_at", { ascending: false })
         .limit(6);
 
-      // Pending (WhatsApp leads)
+      // Pending leads
       const { data: po } = await supabase
         .from("orders")
         .select("*")
@@ -49,7 +51,7 @@ export default function AdminDashboard() {
         .order("created_at", { ascending: false })
         .limit(6);
 
-      // Low stock / out of stock (available=false)
+      // Out of stock
       const { data: ls } = await supabase
         .from("cakes")
         .select("id,name,category,price,image_url,available,featured,created_at")
@@ -57,22 +59,77 @@ export default function AdminDashboard() {
         .order("created_at", { ascending: false })
         .limit(6);
 
+      // ✅ Fetch more orders for accounting (increase if you want)
+      const { data: ao } = await supabase
+        .from("orders")
+        .select("id,status,total_price,created_at")
+        .order("created_at", { ascending: false })
+        .limit(1000);
+
       setRecentOrders(ro || []);
       setPendingOrders(po || []);
       setLowStock(ls || []);
+      setAllOrders(ao || []);
+
       setLoadingPanels(false);
     })();
   }, []);
 
-  // Simple category breakdown using cakes we have in DB (quick, no extra table needed)
-  const categoryStats = useMemo(() => {
-    // For accuracy you can fetch all cakes; but this is fine for small shops.
-    // If you want exact counts, tell me and I’ll do a grouped query.
-    const map = new Map();
-    // We'll compute from lowStock + a small sample from recentOrders not ideal,
-    // so instead we’ll do a tiny extra query once:
-    return map;
-  }, []);
+  // ✅ Accounting calculations
+  const accounting = useMemo(() => {
+    const orders = allOrders || [];
+
+    const now = new Date();
+
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Sunday-start week
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    function toDate(x) {
+      const d = new Date(x);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function sum(list) {
+      return list.reduce((acc, o) => acc + Number(o.total_price || 0), 0);
+    }
+
+    const completed = orders.filter((o) => (o.status || "").toLowerCase() === "completed");
+    const pending = orders.filter((o) => (o.status || "").toLowerCase() === "pending");
+
+    const todayOrders = completed.filter((o) => {
+      const d = toDate(o.created_at);
+      return d && d >= startOfDay;
+    });
+
+    const weekOrders = completed.filter((o) => {
+      const d = toDate(o.created_at);
+      return d && d >= startOfWeek;
+    });
+
+    const monthOrders = completed.filter((o) => {
+      const d = toDate(o.created_at);
+      return d && d >= startOfMonth;
+    });
+
+    const totalCompletedRevenue = sum(completed);
+    const pendingAmount = sum(pending);
+
+    const avgOrderValue =
+      completed.length > 0 ? totalCompletedRevenue / completed.length : 0;
+
+    return {
+      revenueToday: sum(todayOrders),
+      revenueWeek: sum(weekOrders),
+      revenueMonth: sum(monthOrders),
+      totalRevenue: totalCompletedRevenue,
+      pendingAmount,
+      avgOrderValue,
+      completedCount: completed.length,
+      pendingCount: pending.length,
+    };
+  }, [allOrders]);
 
   return (
     <div>
@@ -102,21 +159,52 @@ export default function AdminDashboard() {
 
       {/* Stats */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Total Cake Types" value={stats.cakes} change="+5%" />
-        <StatCard title="Total Orders" value={stats.orders} change="+12%" />
-        <StatCard
-          title="WhatsApp Leads"
-          value={stats.whatsapp}
-          highlight
-          badge="Live"
-        />
+        <StatCard title="Total Cake Types" value={stats.cakes} />
+        <StatCard title="Total Orders" value={stats.orders} />
+        <StatCard title="WhatsApp Leads" value={stats.whatsapp} highlight badge="Live" />
       </div>
 
-      {/* ✅ Content that fills the blank space */}
+      {/* ✅ Accounting section */}
+      <div className="mt-6">
+        <Panel
+          title="Accounting"
+          subtitle="Revenue & pending amounts (based on completed/pending orders)"
+          right={
+            <Link
+              to="/admin/orders"
+              className="text-sm font-extrabold text-pink-600 hover:underline"
+            >
+              See orders →
+            </Link>
+          }
+        >
+          {loadingPanels ? (
+            <PanelLoading />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <MoneyCard label="Revenue Today" value={accounting.revenueToday} />
+              <MoneyCard label="Revenue This Week" value={accounting.revenueWeek} />
+              <MoneyCard label="Revenue This Month" value={accounting.revenueMonth} />
+
+              <MoneyCard label="Total Revenue (Completed)" value={accounting.totalRevenue} />
+              <MoneyCard label="Pending Amount" value={accounting.pendingAmount} danger />
+              <MoneyCard label="Avg Order Value" value={accounting.avgOrderValue} />
+            </div>
+          )}
+
+          {!loadingPanels && (
+            <div className="mt-4 text-xs text-gray-500">
+              Completed orders: <b>{accounting.completedCount}</b> • Pending orders:{" "}
+              <b>{accounting.pendingCount}</b>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      {/* Content */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left (2 cols) */}
+        {/* Left */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Recent Orders */}
           <Panel
             title="Recent Orders"
             subtitle="Latest orders coming from the website / WhatsApp"
@@ -142,7 +230,6 @@ export default function AdminDashboard() {
             )}
           </Panel>
 
-          {/* Pending WhatsApp Leads */}
           <Panel
             title="WhatsApp Leads (Pending)"
             subtitle="Orders that need your response"
@@ -166,13 +253,9 @@ export default function AdminDashboard() {
           </Panel>
         </div>
 
-        {/* Right (1 col) */}
+        {/* Right */}
         <div className="space-y-6">
-          {/* Quick Actions */}
-          <Panel
-            title="Quick Actions"
-            subtitle="Fast access to key admin tasks"
-          >
+          <Panel title="Quick Actions" subtitle="Fast access to key admin tasks">
             <div className="grid grid-cols-1 gap-3">
               <Link
                 to="/admin/cakes"
@@ -197,11 +280,7 @@ export default function AdminDashboard() {
             </div>
           </Panel>
 
-          {/* Low stock / Unavailable */}
-          <Panel
-            title="Out of Stock"
-            subtitle="Cakes marked as unavailable"
-          >
+          <Panel title="Out of Stock" subtitle="Cakes marked as unavailable">
             {loadingPanels ? (
               <PanelLoading />
             ) : lowStock.length === 0 ? (
@@ -223,7 +302,8 @@ export default function AdminDashboard() {
                         {c.name || "Cake"}
                       </div>
                       <div className="text-xs text-gray-500 truncate">
-                        {(c.category || "—").toUpperCase()} • ${Number(c.price || 0).toFixed(2)}
+                        {(c.category || "—").toUpperCase()} • $
+                        {Number(c.price || 0).toFixed(2)}
                       </div>
                     </div>
                     <span className="text-[11px] font-extrabold px-2 py-1 rounded-full bg-gray-100 text-gray-600">
@@ -242,7 +322,7 @@ export default function AdminDashboard() {
 
 /* ---------------- UI pieces ---------------- */
 
-function StatCard({ title, value, change, highlight, badge }) {
+function StatCard({ title, value, highlight, badge }) {
   return (
     <div
       className={`rounded-2xl p-5 border shadow-sm ${
@@ -259,8 +339,17 @@ function StatCard({ title, value, change, highlight, badge }) {
       </div>
 
       <div className="mt-2 text-3xl font-extrabold text-gray-900">{value}</div>
+    </div>
+  );
+}
 
-      {change && <div className="mt-1 text-xs font-bold text-green-600">{change}</div>}
+function MoneyCard({ label, value, danger = false }) {
+  return (
+    <div className={"rounded-2xl border p-4 " + (danger ? "border-red-200 bg-red-50" : "border-gray-100 bg-white")}>
+      <div className="text-xs font-bold text-gray-600">{label}</div>
+      <div className={"mt-2 text-2xl font-extrabold " + (danger ? "text-red-600" : "text-gray-900")}>
+        ${Number(value || 0).toFixed(2)}
+      </div>
     </div>
   );
 }
@@ -298,12 +387,11 @@ function EmptyState({ text }) {
   );
 }
 
-function OrderRow({ order, emphasize = false }) {
+function OrderRow({ order }) {
   const id = order.id ?? "—";
   const status = (order.status || "pending").toString();
   const created = order.created_at ? new Date(order.created_at).toLocaleString() : "";
 
-  // If your orders table has customer_name/phone, it will show it, otherwise fallback.
   const customer =
     order.customer_name ||
     order.customer ||
@@ -311,13 +399,7 @@ function OrderRow({ order, emphasize = false }) {
     order.customer_phone ||
     "Customer";
 
-  // If order has total, show it; else show 0
-  const total =
-    typeof order.total === "number"
-      ? order.total
-      : typeof order.total_amount === "number"
-      ? order.total_amount
-      : null;
+  const total = Number(order.total_price || 0);
 
   const badge =
     status === "pending"
@@ -327,7 +409,7 @@ function OrderRow({ order, emphasize = false }) {
       : "bg-gray-100 text-gray-700";
 
   return (
-    <div className={"py-3 flex items-center justify-between gap-3 " + (emphasize ? "" : "")}>
+    <div className="py-3 flex items-center justify-between gap-3">
       <div className="min-w-0">
         <div className="font-extrabold text-gray-900 truncate">
           Order #{String(id).slice(0, 8)}
@@ -338,11 +420,9 @@ function OrderRow({ order, emphasize = false }) {
       </div>
 
       <div className="flex items-center gap-2">
-        {total !== null && (
-          <div className="text-sm font-extrabold text-gray-900 whitespace-nowrap">
-            ${Number(total).toFixed(2)}
-          </div>
-        )}
+        <div className="text-sm font-extrabold text-gray-900 whitespace-nowrap">
+          ${total.toFixed(2)}
+        </div>
         <span className={"text-xs font-extrabold px-2 py-1 rounded-full " + badge}>
           {status}
         </span>
