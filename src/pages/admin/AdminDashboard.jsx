@@ -59,7 +59,7 @@ export default function AdminDashboard() {
         .order("created_at", { ascending: false })
         .limit(6);
 
-      // ✅ Fetch more orders for accounting (increase if you want)
+      // ✅ Fetch more orders for accounting
       const { data: ao } = await supabase
         .from("orders")
         .select("id,status,total_price,created_at")
@@ -75,59 +75,79 @@ export default function AdminDashboard() {
     })();
   }, []);
 
-  // ✅ Accounting calculations
+  // ✅ Accounting calculations (based on pending/confirmed/delivered/cancelled)
   const accounting = useMemo(() => {
     const orders = allOrders || [];
-
     const now = new Date();
 
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
     const startOfWeek = new Date(startOfDay);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Sunday-start week
+    // Sunday-start week (0). If you want Monday, tell me.
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    function toDate(x) {
+    const toDate = (x) => {
       const d = new Date(x);
       return isNaN(d.getTime()) ? null : d;
-    }
+    };
 
-    function sum(list) {
-      return list.reduce((acc, o) => acc + Number(o.total_price || 0), 0);
-    }
+    const sum = (list) =>
+      list.reduce((acc, o) => acc + Number(o.total_price || 0), 0);
 
-    const completed = orders.filter((o) => (o.status || "").toLowerCase() === "completed");
-    const pending = orders.filter((o) => (o.status || "").toLowerCase() === "pending");
+    const byStatus = (s) =>
+      orders.filter((o) => (o.status || "").toLowerCase() === s);
 
-    const todayOrders = completed.filter((o) => {
-      const d = toDate(o.created_at);
-      return d && d >= startOfDay;
-    });
+    const pending = byStatus("pending");
+    const confirmed = byStatus("confirmed");
+    const delivered = byStatus("delivered");
+    const cancelled = byStatus("cancelled");
 
-    const weekOrders = completed.filter((o) => {
-      const d = toDate(o.created_at);
-      return d && d >= startOfWeek;
-    });
+    const filterFrom = (list, start) =>
+      list.filter((o) => {
+        const d = toDate(o.created_at);
+        return d && d >= start;
+      });
 
-    const monthOrders = completed.filter((o) => {
-      const d = toDate(o.created_at);
-      return d && d >= startOfMonth;
-    });
+    // ✅ Revenue = delivered فقط
+    const deliveredToday = filterFrom(delivered, startOfDay);
+    const deliveredWeek = filterFrom(delivered, startOfWeek);
+    const deliveredMonth = filterFrom(delivered, startOfMonth);
 
-    const totalCompletedRevenue = sum(completed);
+    // ✅ Expected = confirmed
+    const confirmedToday = filterFrom(confirmed, startOfDay);
+    const confirmedWeek = filterFrom(confirmed, startOfWeek);
+    const confirmedMonth = filterFrom(confirmed, startOfMonth);
+
+    const totalDelivered = sum(delivered);
+    const totalConfirmed = sum(confirmed);
     const pendingAmount = sum(pending);
 
-    const avgOrderValue =
-      completed.length > 0 ? totalCompletedRevenue / completed.length : 0;
+    const avgDelivered = delivered.length > 0 ? totalDelivered / delivered.length : 0;
 
     return {
-      revenueToday: sum(todayOrders),
-      revenueWeek: sum(weekOrders),
-      revenueMonth: sum(monthOrders),
-      totalRevenue: totalCompletedRevenue,
+      // delivered revenue
+      revenueToday: sum(deliveredToday),
+      revenueWeek: sum(deliveredWeek),
+      revenueMonth: sum(deliveredMonth),
+      totalDelivered,
+
+      // confirmed expected
+      expectedToday: sum(confirmedToday),
+      expectedWeek: sum(confirmedWeek),
+      expectedMonth: sum(confirmedMonth),
+      totalConfirmed,
+
       pendingAmount,
-      avgOrderValue,
-      completedCount: completed.length,
-      pendingCount: pending.length,
+      avgDelivered,
+
+      counts: {
+        pending: pending.length,
+        confirmed: confirmed.length,
+        delivered: delivered.length,
+        cancelled: cancelled.length,
+      },
     };
   }, [allOrders]);
 
@@ -136,18 +156,12 @@ export default function AdminDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-gray-900">
-            Dashboard Overview
-          </h1>
-          <p className="text-sm text-gray-500">
-            Welcome back! Here’s your bakery’s performance.
-          </p>
+          <h1 className="text-2xl font-extrabold text-gray-900">Dashboard Overview</h1>
+          <p className="text-sm text-gray-500">Welcome back! Here’s your bakery’s performance.</p>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-soft flex items-center justify-center">
-            🔔
-          </div>
+          <div className="w-9 h-9 rounded-full bg-soft flex items-center justify-center">🔔</div>
           <div className="flex items-center gap-2 bg-soft px-3 py-2 rounded-full">
             <div className="w-6 h-6 rounded-full bg-pink-500 text-white flex items-center justify-center text-xs">
               A
@@ -168,12 +182,9 @@ export default function AdminDashboard() {
       <div className="mt-6">
         <Panel
           title="Accounting"
-          subtitle="Revenue & pending amounts (based on completed/pending orders)"
+          subtitle="Revenue = delivered • Expected = confirmed • Pending = pending"
           right={
-            <Link
-              to="/admin/orders"
-              className="text-sm font-extrabold text-pink-600 hover:underline"
-            >
+            <Link to="/admin/orders" className="text-sm font-extrabold text-pink-600 hover:underline">
               See orders →
             </Link>
           }
@@ -181,22 +192,25 @@ export default function AdminDashboard() {
           {loadingPanels ? (
             <PanelLoading />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <MoneyCard label="Revenue Today" value={accounting.revenueToday} />
-              <MoneyCard label="Revenue This Week" value={accounting.revenueWeek} />
-              <MoneyCard label="Revenue This Month" value={accounting.revenueMonth} />
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <MoneyCard label="Revenue Today (Delivered)" value={accounting.revenueToday} />
+                <MoneyCard label="Revenue This Week (Delivered)" value={accounting.revenueWeek} />
+                <MoneyCard label="Revenue This Month (Delivered)" value={accounting.revenueMonth} />
 
-              <MoneyCard label="Total Revenue (Completed)" value={accounting.totalRevenue} />
-              <MoneyCard label="Pending Amount" value={accounting.pendingAmount} danger />
-              <MoneyCard label="Avg Order Value" value={accounting.avgOrderValue} />
-            </div>
-          )}
+                <MoneyCard label="Total Delivered Revenue" value={accounting.totalDelivered} />
+                <MoneyCard label="Total Confirmed (Expected)" value={accounting.totalConfirmed} />
+                <MoneyCard label="Pending Amount" value={accounting.pendingAmount} danger />
+              </div>
 
-          {!loadingPanels && (
-            <div className="mt-4 text-xs text-gray-500">
-              Completed orders: <b>{accounting.completedCount}</b> • Pending orders:{" "}
-              <b>{accounting.pendingCount}</b>
-            </div>
+              <div className="mt-4 text-xs text-gray-500">
+                Pending: <b>{accounting.counts.pending}</b> • Confirmed:{" "}
+                <b>{accounting.counts.confirmed}</b> • Delivered:{" "}
+                <b>{accounting.counts.delivered}</b> • Cancelled:{" "}
+                <b>{accounting.counts.cancelled}</b> • Avg Delivered Order:{" "}
+                <b>${Number(accounting.avgDelivered || 0).toFixed(2)}</b>
+              </div>
+            </>
           )}
         </Panel>
       </div>
@@ -209,10 +223,7 @@ export default function AdminDashboard() {
             title="Recent Orders"
             subtitle="Latest orders coming from the website / WhatsApp"
             right={
-              <Link
-                to="/admin/orders"
-                className="text-sm font-extrabold text-pink-600 hover:underline"
-              >
+              <Link to="/admin/orders" className="text-sm font-extrabold text-pink-600 hover:underline">
                 View all
               </Link>
             }
@@ -246,7 +257,7 @@ export default function AdminDashboard() {
             ) : (
               <div className="divide-y divide-gray-100">
                 {pendingOrders.map((o) => (
-                  <OrderRow key={o.id} order={o} emphasize />
+                  <OrderRow key={o.id} order={o} />
                 ))}
               </div>
             )}
@@ -298,12 +309,9 @@ export default function AdminDashboard() {
                       className="w-12 h-12 rounded-2xl object-cover border border-gray-100"
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="font-extrabold text-gray-900 truncate">
-                        {c.name || "Cake"}
-                      </div>
+                      <div className="font-extrabold text-gray-900 truncate">{c.name || "Cake"}</div>
                       <div className="text-xs text-gray-500 truncate">
-                        {(c.category || "—").toUpperCase()} • $
-                        {Number(c.price || 0).toFixed(2)}
+                        {(c.category || "—").toUpperCase()} • ${Number(c.price || 0).toFixed(2)}
                       </div>
                     </div>
                     <span className="text-[11px] font-extrabold px-2 py-1 rounded-full bg-gray-100 text-gray-600">
@@ -337,7 +345,6 @@ function StatCard({ title, value, highlight, badge }) {
           </span>
         )}
       </div>
-
       <div className="mt-2 text-3xl font-extrabold text-gray-900">{value}</div>
     </div>
   );
@@ -345,9 +352,19 @@ function StatCard({ title, value, highlight, badge }) {
 
 function MoneyCard({ label, value, danger = false }) {
   return (
-    <div className={"rounded-2xl border p-4 " + (danger ? "border-red-200 bg-red-50" : "border-gray-100 bg-white")}>
+    <div
+      className={
+        "rounded-2xl border p-4 " +
+        (danger ? "border-red-200 bg-red-50" : "border-gray-100 bg-white")
+      }
+    >
       <div className="text-xs font-bold text-gray-600">{label}</div>
-      <div className={"mt-2 text-2xl font-extrabold " + (danger ? "text-red-600" : "text-gray-900")}>
+      <div
+        className={
+          "mt-2 text-2xl font-extrabold " +
+          (danger ? "text-red-600" : "text-gray-900")
+        }
+      >
         ${Number(value || 0).toFixed(2)}
       </div>
     </div>
@@ -389,7 +406,7 @@ function EmptyState({ text }) {
 
 function OrderRow({ order }) {
   const id = order.id ?? "—";
-  const status = (order.status || "pending").toString();
+  const status = (order.status || "pending").toLowerCase();
   const created = order.created_at ? new Date(order.created_at).toLocaleString() : "";
 
   const customer =
@@ -404,8 +421,12 @@ function OrderRow({ order }) {
   const badge =
     status === "pending"
       ? "bg-yellow-100 text-yellow-700"
-      : status === "completed"
+      : status === "confirmed"
+      ? "bg-blue-100 text-blue-700"
+      : status === "delivered"
       ? "bg-green-100 text-green-700"
+      : status === "cancelled"
+      ? "bg-red-100 text-red-700"
       : "bg-gray-100 text-gray-700";
 
   return (
